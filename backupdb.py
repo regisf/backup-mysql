@@ -137,29 +137,27 @@ class BackupAction(Action):
 
 class RestoreAction(Action):
     def process_action(self):
-        with Cursor(self.conn) as cursor:
+        for table in self.tables:
+            L.info(f'Restoring {table}')
 
-            for table in self.tables:
-                L.info(f'Restoring {table}')
+            if not self.file_exists(table):
+                L.error(f'The file "{self.create_file_name(table)}" doesn\'t exist. Skipping.')
 
-                if not self.file_exists(table):
-                    L.error(f'The file "{self.create_file_name(table)}" doesn\'t exist. Skipping.')
+                continue
 
-                    continue
+            if not self.table_exists(table):
+                L.warning(f'Table "{table} not found on destination database. Skipping.')
+                continue
 
-                if not self.table_exists(table):
-                    L.warning(f'Table "{table} not found on destination database. Skipping.')
-                    continue
+            content = self.load_json_file(table)
+            content = self.compare_content(table, content)
 
-                content = self.load_json_file(table)
-                content = self.compare_content(table, content)
+            fields = self.get_keys(content)
+            if not fields:
+                L.warning(f'Table {table} is empty')
+                continue
 
-                fields = self.get_keys(content)
-                if not fields:
-                    L.warning(f'Table {table} is empty')
-                    continue
-
-                self.insert_into_db(table, content, fields)
+            self.insert_into_db(table, content, fields)
 
     def insert_into_db(self, table: str, content: List[Dict], fields: List):
         query = 'INSERT INTO {table_name} ({fields}) VALUES ({values})'.format(table_name=table,
@@ -168,6 +166,8 @@ class RestoreAction(Action):
         values = [list(row.values()) for row in content]
 
         with Cursor(self.conn) as cursor:
+            cursor.execute('SET foreign_key_checks = 0;')
+
             for value in values:
                 try:
                     cursor.execute(query, value)  # Execture many [()]
@@ -223,8 +223,8 @@ class Application:
     def __init__(self):
         self.arguments = self.install_arguments_parser()
         self.config = Configuration(self.arguments.config_file)
-        self.db_src = self.create_databases_connection(self.config.source_database)
-        self.db_dest = self.create_databases_connection(self.config.destination_database)
+        self.db_src = self.create_databases_connection(self.config.source_database, self.arguments.backup)
+        self.db_dest = self.create_databases_connection(self.config.destination_database, self.arguments.restore)
 
         self.backup_if_required()
         self.restore_if_required()
@@ -239,12 +239,13 @@ class Application:
             action = RestoreAction(self.db_dest, self.config.tables, self.arguments.directory)
             action.process_action()
 
-    def create_databases_connection(self, info: DatabaseEntry):
-        return mysql.connector.connect(user=info.user,
-                                       password=info.password,
-                                       database=info.database,
-                                       host=info.host,
-                                       port=info.port)
+    def create_databases_connection(self, info: DatabaseEntry, creating: bool):
+        if creating:
+            return mysql.connector.connect(user=info.user,
+                                           password=info.password,
+                                           database=info.database,
+                                           host=info.host,
+                                           port=info.port)
 
     def install_arguments_parser(self):
         parser = argparse.ArgumentParser()
