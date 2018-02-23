@@ -2,23 +2,20 @@
 """
 backupdb : Simple backup a database using JSON
 (c) Regis FLORET <regisfloret@ŋmail.com>
-
-
 """
 
+import abc
 import argparse
+import collections
 import configparser
 import datetime
 import json
 import logging
-import sys
-from typing import Dict, List, NamedTuple
-
-import abc
-import mysql.connector
 import os
+import sys
+
+import mysql.connector
 from mysql.connector import MySQLConnection
-from mysql.connector.cursor import MySQLCursor
 
 DEFAULT_HOST = 'localhost'
 DEFAULT_PORT = 3306
@@ -26,16 +23,8 @@ DEFAULT_PORT = 3306
 L = logging.getLogger(__name__)
 L.addHandler(logging.StreamHandler(stream=sys.stdout))
 
-
-class DatabaseEntry(NamedTuple):
-    """
-    Database information container
-    """
-    host: str
-    user: str
-    password: str
-    database: str
-    port: int
+# Database information container
+DatabaseEntry = collections.namedtuple('DatabaseEntry', ('host', 'user', 'password', 'database', 'port'))
 
 
 class Cursor:
@@ -49,7 +38,10 @@ class Cursor:
         self.cur = None
         self.kwargs = kwargs
 
-    def __enter__(self) -> MySQLCursor:
+    def __enter__(self):
+        """
+        rtype:MySQLCursor
+        """
         self.cur = self.conn.cursor(**self.kwargs)
         return self.cur
 
@@ -64,16 +56,22 @@ def user_encoder(obj):
 
 
 class Configuration:
-    def __init__(self, config_file: str):
+    def __init__(self, config_file):
+        """
+        :type config_file: str
+        """
         self.config = configparser.ConfigParser()
         self.read_configuration_file(config_file)
 
-    def read_configuration_file(self, config_file: str):
+    def read_configuration_file(self, config_file):
+        """
+        :type config_file: str
+        """
         if not os.path.exists(config_file):
-            sys.exit(f"The configuration file {config_file}) don't exists")
+            sys.exit("The configuration file {config_file}) don't exists".format(config_file=config_file))
 
         if not os.path.isfile(config_file):
-            sys.exit(f"The configuration file {config_file}) is not a file")
+            sys.exit("The configuration file {config_file}) is not a file".format(config_file=config_file))
 
         with open(config_file, 'r') as file_config:
             self.config.read_file(file_config)
@@ -84,7 +82,11 @@ class Configuration:
         return list(filter(lambda x: x != '', tables_entry.split('\n')))
 
     @property
-    def source_database(self) -> DatabaseEntry:
+    def source_database(self):
+        """
+        :rtype: DatabaseEntry
+        """
+
         source_entry = self.config['backup']
         return DatabaseEntry(host=source_entry.get('host') or DEFAULT_HOST,
                              user=source_entry.get('user'),
@@ -93,7 +95,10 @@ class Configuration:
                              port=source_entry.get('port') or DEFAULT_PORT)
 
     @property
-    def destination_database(self) -> DatabaseEntry:
+    def destination_database(self):
+        """
+        :rtype: DatabaseEntry
+        """
         dest_entry = self.config['restore']
         return DatabaseEntry(host=dest_entry.get('host') or DEFAULT_HOST,
                              user=dest_entry.get('user'),
@@ -106,7 +111,13 @@ class Action(abc.ABC):
     """
     Abstract class for the backup and the restore action
     """
-    def __init__(self, conn: MySQLConnection, tables: List[str], output: str):
+
+    def __init__(self, conn, tables, output):
+        """
+        :type conn: MySQLConnection
+        :type tables: list
+        :type output: str
+        """
         self.conn = conn
         self.tables = tables
         self.output = output
@@ -115,20 +126,28 @@ class Action(abc.ABC):
     def process_action(self):
         pass
 
-    def create_file_name(self, table_name: str) -> str:
-        return os.path.join(self.output, f'{table_name}.json')
+    def create_file_name(self, table_name):
+        """
+        :type table_name: str
+        :rtype: str
+        """
+        return os.path.join(self.output, "{table_name}.json".format(table_name=table_name))
 
 
 class BackupAction(Action):
     def process_action(self):
         with Cursor(self.conn, dictionary=True) as cursor:
             for table in self.tables:
-                L.info(f'Saving {table}')
-                cursor.execute(f'SELECT * FROM {table}')
+                L.info("Saving {table}".format(table=table))
+                cursor.execute("SELECT * FROM {table}".format(table=table))
                 rows = [row for row in cursor]
                 self.save_as_json(table, rows)
 
-    def save_as_json(self, table_name: str, data: List[Dict]):
+    def save_as_json(self, table_name, data):
+        """
+        :type table_name: str
+        :type data: list
+        """
         result = json.dumps(data, default=user_encoder)
 
         with open(self.create_file_name(table_name), 'w', encoding='utf-8') as json_file:
@@ -138,15 +157,15 @@ class BackupAction(Action):
 class RestoreAction(Action):
     def process_action(self):
         for table in self.tables:
-            L.info(f'Restoring {table}')
+            L.info("Restoring {table}".format(table=table))
 
             if not self.file_exists(table):
-                L.error(f'The file "{self.create_file_name(table)}" doesn\'t exist. Skipping.')
+                L.error("The file '{table}' doesn't.format()t exist. Skipping.".format(table=table))
 
                 continue
 
             if not self.table_exists(table):
-                L.warning(f'Table "{table} not found on destination database. Skipping.')
+                L.warning("Table '{table}' not found on destination database. Skipping.".format(table=table))
                 continue
 
             content = self.load_json_file(table)
@@ -154,12 +173,17 @@ class RestoreAction(Action):
 
             fields = self.get_keys(content)
             if not fields:
-                L.warning(f'Table {table} is empty')
+                L.warning("Table {table} is empty".format(table=table))
                 continue
 
             self.insert_into_db(table, content, fields)
 
-    def insert_into_db(self, table: str, content: List[Dict], fields: List):
+    def insert_into_db(self, table, content, fields):
+        """
+        :param table:str
+        :param content:list
+        :param fields:list
+        """
         query = 'INSERT INTO {table_name} ({fields}) VALUES ({values})'.format(table_name=table,
                                                                                fields=','.join(fields),
                                                                                values=','.join(['%s'] * len(fields)))
@@ -170,50 +194,74 @@ class RestoreAction(Action):
 
             for value in values:
                 try:
-                    cursor.execute(query, value)  # Execture many [()]
+                    cursor.execute(query, value)
                 except mysql.connector.errors.DataError as err:
-                    print(f'ca merde à cet endroit {value[0]} because {err}')
+                    print("ca merde à cet endroit {value} because {err}".format(value=value[0], err=err))
 
                 except mysql.connector.errors.IntegrityError as err:
-                    print(f"Erreur d'integrité pour {value[0]} because {err}")
+                    print("Erreur d'integrité pour {value} because {err}".format(value=value[0], err=err))
 
-    def load_json_file(self, table_name: str):
+    def load_json_file(self, table_name):
+        """
+        :type table_name: str
+        """
         with open(self.create_file_name(table_name), 'r') as json_file:
             content = json_file.read()
             return json.loads(content)
 
-    def table_exists(self, table_name: str) -> bool:
+    def table_exists(self, table_name):
+        """
+        :type table_name: str
+        :rtype: bool
+        """
         with Cursor(self.conn) as cursor:
-            cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
+            cursor.execute("SHOW TABLES LIKE '{table_name}'".format(table_name=table_name))
             return cursor.fetchone() is not None
 
-    def file_exists(self, table_name: str) -> bool:
+    def file_exists(self, table_name):
+        """
+        :type table_name: str
+        :rtype: bool
+        """
         file_name = self.create_file_name(table_name)
 
         return os.path.exists(file_name) and os.path.isfile(file_name)
 
-    def get_keys(self, content: List[Dict], simple: bool = False) -> List:
+    def get_keys(self, content, simple=False):
+        """
+        :type content: list
+        :type simple: bool
+        :rtype: list
+        """
         if len(content):
-            return [f'`{key}`' if not simple else key for key in content[0].keys()]
+            return ["`{key}`".format(key=key) if not simple else key for key in content[0].keys()]
         return []
 
-    def compare_content(self, table: str, content: List[Dict]):
+    def compare_content(self, table, content):
+        """
+        :param table: str
+        :param content:  list
+        """
         keys = self.get_keys(content, simple=True)
         db_structure = self.get_table_structure(table)
         result_set = set(keys) - set(db_structure)
 
         if result_set:
-            print(f'Table {table} as a diff {result_set}')
+            print("Table {table} as a diff {result_set}".format(table=table, result_set=result_set))
             for rs in result_set:
-                print(f'{rs} is in source but not on the dest -> Remove from database results')
+                print("{rs} is in source but not on the dest -> Remove from database results".format(rs=result_set))
                 for row in content:
                     row.pop(rs)
 
         return content
 
-    def get_table_structure(self, table: str) -> List:
+    def get_table_structure(self, table):
+        """
+        :type table: str
+        :rtype: list
+        """
         with Cursor(self.conn) as cursor:
-            cursor.execute(f'DESC {table}')
+            cursor.execute("DESC {table}".format(table=table))
             fields = [field[0] for field in cursor]
 
             return fields
@@ -240,6 +288,10 @@ class Application:
             action.process_action()
 
     def create_databases_connection(self, info: DatabaseEntry, creating: bool):
+        """+
+        :type info:  DatabaseEntry
+        :type creating:  bool
+        """
         if creating:
             return mysql.connector.connect(user=info.user,
                                            password=info.password,
