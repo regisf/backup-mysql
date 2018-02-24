@@ -1,3 +1,5 @@
 .idea
 config.cfg
-
+backupdb.egg-info
+build
+dist
