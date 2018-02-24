@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-backupdb : Simple backup a database using JSON
+backupdb.py : Simple backup a database using JSON
 (c) Regis FLORET <regisfloret@ŋmail.com>
 """
 
